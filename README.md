@@ -1,2 +1,2 @@
 # Gorme-Engelliler-Icin-Sesli-Bildirimli-Nesne-Tespiti-Uygulamasi
-Python ve Yolov8 kullanılarak Görme Engelliler için sesli bildirim yapan nesne tespiti uygulaması
+MediaPipe Kullanılarak Objeleri mesafeleriyle birlikte ölçen ve text-to-speech ile görme engelli bireye geri bildirim yapan uygulama.
