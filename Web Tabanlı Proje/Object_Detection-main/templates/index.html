@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Görme Engelliler İçin Sesli Bildirimli Nesne Tespiti</title>
+    <!-- AdminLTE CSS -->
+    <link rel="stylesheet" href="static/assets/adminlte.min.css">
+    <link rel="stylesheet" href="static/assets/adminlte.css">
+    <!-- Custom CSS -->
+    <style>
+         body {
+            background-color: #f4f6f9;
+            font-family: 'Source Sans Pro', sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .wrapper {
+            max-width: 1200px;
+            width: 100%;
+            margin: auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+        .logo {
+            width: 100px;
+            height: auto;
+        }
+        .card {
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .card-body {
+            padding: 20px;
+        }
+        .form-signin {
+            padding: 20px;
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .btn-default {
+            background-color: #3c8dbc;
+            color: white;
+            padding: 5px 10px;
+            font-size: 16px;
+        }
+        .btn-default:hover {
+            background-color: #367fa9;
+        }
+        .form-check-label {
+            margin-left: 10px;
+        }
+        .form-control-file {
+            margin-bottom: 20px;
+        }
+        #my-image, #my-video-image {
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body class="hold-transition sidebar-mini">
+    <div class="wrapper">
+        <!-- Logo Section -->
+        <section class="col-lg-6 connectedSortable text-center">
+            <img src="../static/assets/ululogo.png" alt="Logo" class="logo">
+        </section>
+        <section class="col-lg-6 connectedSortable text-center">
+          <h1>Görme Engelliler İçin Sesli Geri Bildirimli Nesne & Hareket Tespiti </h1>
+      </section>
+        <section class="col-lg-6 connectedSortable" >
+            <div class="card">
+                <div class="card-body">
+                    <div class="tab-content p-0">
+                        <!-- Upload Form -->
+                        <form class="form-signin col-lg-12" method="post" enctype="multipart/form-data" name="form1">
+                            <h3 class="h3 mb-3 font-weight-normal">Resim veya Video Dosyası Yükle</h3>
+                            <input type="file" name="file" class="form-control-file" id="inputfile">
+                            <br />
+                            <button class="btn btn-block btn-default btn-sm" type="submit">Yükle</button>
+                            <br />
+                            <br />
+                            <div class="form-check mt-3">
+                                <input class="form-check-input" type="radio" name="detectionType" id="objectDetection" value="objectDetection" checked>
+                                <label class="form-check-label" for="objectDetection">
+                                    Nesne Tespiti
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="detectionType" id="motionDetection" value="motionDetection">
+                                <label class="form-check-label" for="motionDetection">
+                                    Hareket Tespiti
+                                </label>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="col-lg-12 connectedSortable">
+          <br />
+          
+            <div class="card">
+                <div class="card-body">
+                    <div class="tab-content p-0">
+                        <div class="chart tab-pane active" id="result-container" style="position: relative; height: 700px;">
+                            {% if media_type == 'image' %}
+                                <img id="my-image" src="{{ url_for('display', filename=image_path, _external=True) }}" style="max-width: 100%; max-height: 100%; display: none;" />
+                                <script>
+                                    document.getElementById("my-image").onload = function() {
+                                        this.style.display = "block";
+                                        var detectionType = "{{ detectionType }}"; 
+                                        var audioPath;
+                                        if(detectionType === 'objectDetection'){
+                                          audioPath = `static/assets/output.mp3`;
+                                        }
+                                        else if(detectionType === 'motionDetection'){
+                                          audioPath = `static/assets/outputHareket.mp3`;
+                                        }
+                                        var audio = new Audio(audioPath);
+                                        audio.play();
+                                    };
+                                </script>
+                            {% endif %}
+        
+                
+                            <img id="my-video-image" src="{{ url_for('video_feed') }}" style="max-width: 100%; max-height: 100%; display: none;" />
+                            <script>
+                                document.getElementById("my-video-image").onload = function() {
+                                    this.style.display = "block";
+                                    var sayac = "{{ sayac }}";
+                                    var detectionType = "{{ detectionType }}"; 
+                                    function playAudio(index) {
+                                        if (index <= sayac) {
+                                            var audioPath;
+                                            if (detectionType === 'objectDetection') {
+                                                audioPath = `static/assets/output${index}.mp3`;
+                                            } else if (detectionType === 'motionDetection') {
+                                                audioPath = `static/assets/outputHareket${index}.mp3`;
+                                            }
+                                            var audio = new Audio(audioPath);
+                                            audio.onended = function() {
+                                                playAudio(index + 1);
+                                            };
+                                            audio.play();
+                                        }
+                                    }
+                                    playAudio(0);
+                                };
+                            </script>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </div>
+</body>
+</html>

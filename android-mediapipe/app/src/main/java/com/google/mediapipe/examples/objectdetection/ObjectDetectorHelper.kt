@@ -17,40 +17,73 @@ package com.google.mediapipe.examples.objectdetection
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.media.Image
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.SystemClock
 import android.util.Log
+import android.speech.tts.TextToSpeech
 import androidx.annotation.VisibleForTesting
 import androidx.camera.core.ImageProxy
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.framework.image.MPImage
+import com.google.mediapipe.tasks.components.containers.Detection
 import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.core.Delegate
 import com.google.mediapipe.tasks.vision.core.ImageProcessingOptions
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.objectdetector.ObjectDetector
 import com.google.mediapipe.tasks.vision.objectdetector.ObjectDetectorResult
+import java.util.*
+import android.util.Base64
+import okhttp3.*
+import java.io.ByteArrayOutputStream
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.RequestBody.Companion.toRequestBody
+import android.graphics.BitmapFactory
+import com.google.mediapipe.formats.proto.LocationDataProto.LocationData.BoundingBox
+import com.google.mediapipe.framework.image.BitmapExtractor
+import org.json.JSONObject
+import java.io.File
+import java.util.*
+import java.net.HttpURLConnection
+import java.net.URL
+
+
+
 
 class ObjectDetectorHelper(
-    var threshold: Float = THRESHOLD_DEFAULT,
-    var maxResults: Int = MAX_RESULTS_DEFAULT,
-    var currentDelegate: Int = DELEGATE_CPU,
-    var currentModel: Int = MODEL_EFFICIENTDETV0,
-    var runningMode: RunningMode = RunningMode.IMAGE,
-    val context: Context,
-    // The listener is only used when running in RunningMode.LIVE_STREAM
-    var objectDetectorListener: DetectorListener? = null
+        var threshold: Float = THRESHOLD_DEFAULT,
+        var maxResults: Int = MAX_RESULTS_DEFAULT,
+        var currentDelegate: Int = DELEGATE_CPU,
+        var currentModel: Int = MODEL_EFFICIENTDETV0,
+        var runningMode: RunningMode = RunningMode.IMAGE,
+        val context: Context,
+        // The listener is only used when running in RunningMode.LIVE_STREAM
+        var objectDetectorListener: DetectorListener? = null
 ) {
 
     // For this example this needs to be a var so it can be reset on changes. If the ObjectDetector
     // will not change, a lazy val would be preferable.
     private var objectDetector: ObjectDetector? = null
+    private var textToSpeech: TextToSpeech? = null
+    private var lastAnnouncementTime = 0L
+    private var scaleFactor: Float = 5f
     private var imageRotation = 0
     private lateinit var imageProcessingOptions: ImageProcessingOptions
+    var sonuc="yok"
+    var irisLeftMinX = -1;
+    var irisLeftMaxX = -1;
 
     init {
         setupObjectDetector()
+        textToSpeech = TextToSpeech(context) { status ->
+            if (status != TextToSpeech.ERROR) {
+                textToSpeech?.language = Locale.getDefault()
+            } else {
+                Log.e("ObjectDetectorHelper", "TextToSpeech initialization failed")
+            }
+        }
     }
 
     fun clearObjectDetector() {
@@ -91,7 +124,7 @@ class ObjectDetectorHelper(
             RunningMode.LIVE_STREAM -> {
                 if (objectDetectorListener == null) {
                     throw IllegalStateException(
-                        "objectDetectorListener must be set when runningMode is LIVE_STREAM."
+                            "objectDetectorListener must be set when runningMode is LIVE_STREAM."
                     )
                 }
             }
@@ -103,39 +136,39 @@ class ObjectDetectorHelper(
 
         try {
             val optionsBuilder = ObjectDetector.ObjectDetectorOptions.builder()
-                .setBaseOptions(baseOptionsBuilder.build())
-                .setScoreThreshold(threshold).setRunningMode(runningMode)
-                .setMaxResults(maxResults)
+                    .setBaseOptions(baseOptionsBuilder.build())
+                    .setScoreThreshold(threshold).setRunningMode(runningMode)
+                    .setMaxResults(maxResults)
 
             imageProcessingOptions = ImageProcessingOptions.builder()
-                .setRotationDegrees(imageRotation).build()
+                    .setRotationDegrees(imageRotation).build()
 
             when (runningMode) {
                 RunningMode.IMAGE, RunningMode.VIDEO -> optionsBuilder.setRunningMode(
-                    runningMode
+                        runningMode
                 )
 
                 RunningMode.LIVE_STREAM -> optionsBuilder.setRunningMode(
-                    runningMode
+                        runningMode
                 ).setResultListener(this::returnLivestreamResult)
-                    .setErrorListener(this::returnLivestreamError)
+                        .setErrorListener(this::returnLivestreamError)
             }
 
             val options = optionsBuilder.build()
             objectDetector = ObjectDetector.createFromOptions(context, options)
         } catch (e: IllegalStateException) {
             objectDetectorListener?.onError(
-                "Object detector failed to initialize. See error logs for details"
+                    "Object detector failed to initialize. See error logs for details"
             )
             Log.e(TAG, "TFLite failed to load model with error: " + e.message)
         } catch (e: RuntimeException) {
             objectDetectorListener?.onError(
-                "Object detector failed to initialize. See error logs for " + "details",
-                GPU_ERROR
+                    "Object detector failed to initialize. See error logs for " + "details",
+                    GPU_ERROR
             )
             Log.e(
-                TAG,
-                "Object detector failed to load model with error: " + e.message
+                    TAG,
+                    "Object detector failed to load model with error: " + e.message
             )
         }
     }
@@ -149,12 +182,12 @@ class ObjectDetectorHelper(
     // object detection inference on the video. This process will evaluate every frame in
     // the video and attach the results to a bundle that will be returned.
     fun detectVideoFile(
-        videoUri: Uri, inferenceIntervalMs: Long
+            videoUri: Uri, inferenceIntervalMs: Long
     ): ResultBundle? {
 
         if (runningMode != RunningMode.VIDEO) {
             throw IllegalArgumentException(
-                "Attempting to call detectVideoFile" + " while not using RunningMode.VIDEO"
+                    "Attempting to call detectVideoFile" + " while not using RunningMode.VIDEO"
             )
         }
 
@@ -170,8 +203,8 @@ class ObjectDetectorHelper(
         val retriever = MediaMetadataRetriever()
         retriever.setDataSource(context, videoUri)
         val videoLengthMs =
-            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-                ?.toLong()
+                retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                        ?.toLong()
 
         // Note: We need to read width/height from frame instead of getting the width/height
         // of the video directly because MediaRetriever returns frames that are smaller than the
@@ -191,31 +224,31 @@ class ObjectDetectorHelper(
             val timestampMs = i * inferenceIntervalMs // ms
 
             retriever.getFrameAtTime(
-                timestampMs * 1000, // convert from ms to micro-s
-                MediaMetadataRetriever.OPTION_CLOSEST
+                    timestampMs * 1000, // convert from ms to micro-s
+                    MediaMetadataRetriever.OPTION_CLOSEST
             )?.let { frame ->
                 // Convert the video frame to ARGB_8888 which is required by the MediaPipe
                 val argb8888Frame =
-                    if (frame.config == Bitmap.Config.ARGB_8888) frame
-                    else frame.copy(Bitmap.Config.ARGB_8888, false)
+                        if (frame.config == Bitmap.Config.ARGB_8888) frame
+                        else frame.copy(Bitmap.Config.ARGB_8888, false)
 
                 // Convert the input Bitmap object to an MPImage object to run inference
                 val mpImage = BitmapImageBuilder(argb8888Frame).build()
 
                 // Run object detection using MediaPipe Object Detector API
                 objectDetector?.detectForVideo(mpImage, timestampMs)
-                    ?.let { detectionResult ->
-                        resultList.add(detectionResult)
-                    } ?: {
+                        ?.let { detectionResult ->
+                            resultList.add(detectionResult)
+                        } ?: {
                     didErrorOccurred = true
                     objectDetectorListener?.onError(
-                        "ResultBundle could not be returned" + " in detectVideoFile"
+                            "ResultBundle could not be returned" + " in detectVideoFile"
                     )
                 }
             } ?: run {
                 didErrorOccurred = true
                 objectDetectorListener?.onError(
-                    "Frame at specified time could not be" + " retrieved when detecting in video."
+                        "Frame at specified time could not be" + " retrieved when detecting in video."
                 )
             }
         }
@@ -223,7 +256,7 @@ class ObjectDetectorHelper(
         retriever.release()
 
         val inferenceTimePerFrameMs =
-            (SystemClock.uptimeMillis() - startTime).div(numberOfFrameToRead)
+                (SystemClock.uptimeMillis() - startTime).div(numberOfFrameToRead)
 
         return if (didErrorOccurred) {
             null
@@ -238,7 +271,7 @@ class ObjectDetectorHelper(
 
         if (runningMode != RunningMode.LIVE_STREAM) {
             throw IllegalArgumentException(
-                "Attempting to call detectLivestreamFrame" + " while not using RunningMode.LIVE_STREAM"
+                    "Attempting to call detectLivestreamFrame" + " while not using RunningMode.LIVE_STREAM"
             )
         }
 
@@ -246,7 +279,7 @@ class ObjectDetectorHelper(
 
         // Copy out RGB bits from the frame to a bitmap buffer
         val bitmapBuffer = Bitmap.createBitmap(
-            imageProxy.width, imageProxy.height, Bitmap.Config.ARGB_8888
+                imageProxy.width, imageProxy.height, Bitmap.Config.ARGB_8888
         )
         imageProxy.use { bitmapBuffer.copyPixelsFromBuffer(imageProxy.planes[0].buffer) }
         imageProxy.close()
@@ -263,7 +296,10 @@ class ObjectDetectorHelper(
         val mpImage = BitmapImageBuilder(bitmapBuffer).build()
 
         detectAsync(mpImage, frameTime)
+
+
     }
+
 
     // Run object detection using MediaPipe Object Detector API
     @VisibleForTesting
@@ -273,38 +309,140 @@ class ObjectDetectorHelper(
         objectDetector?.detectAsync(mpImage, imageProcessingOptions, frameTime)
     }
 
-    // Return the detection result to this ObjectDetectorHelper's caller
+
+
+
     private fun returnLivestreamResult(
-        result: ObjectDetectorResult, input: MPImage
+            result: ObjectDetectorResult, input: MPImage
     ) {
         val finishTimeMs = SystemClock.uptimeMillis()
         val inferenceTime = finishTimeMs - result.timestampMs()
 
+        if (result != null) {
+            val currentTime = System.currentTimeMillis()
+            if (currentTime - lastAnnouncementTime >= 5000) {
+                val listeler = result.detections()
+                if (listeler != null && listeler.isNotEmpty()) {
+                    var closestObjectDistance = Float.MIN_VALUE
+                    var closestObjectName = ""
+                    var closestObjectPosition = ""
+                    for (detection in listeler) {
+                        val boundingBox = detection.boundingBox()
+                        if (boundingBox != null) {
+                            val distance = calculateAreaToCamera(
+                                    boundingBox.height(),
+                                    boundingBox.width()
+                            )
+                            if (distance > closestObjectDistance) {
+                                closestObjectDistance = distance.toFloat()
+                                closestObjectName = detection.categories()[0].categoryName()
+
+                                val boundingBoxLeft = boundingBox.left
+                                val boundingBoxRight = boundingBox.right
+                                Log.d("YAKUP BOUNDINGBOX", "Left: $boundingBoxLeft, Right: $boundingBoxRight")
+
+                                val screenCenterX = input.width / 2
+                                Log.d("YAKUP merkez", "$screenCenterX")
+
+                                if (boundingBoxLeft > screenCenterX && boundingBoxLeft-30>screenCenterX) {
+                                    closestObjectPosition = "Sağ tarafta"
+                                } else if (boundingBoxRight < screenCenterX && boundingBoxRight+30<screenCenterX){
+                                    closestObjectPosition = "Sol tarafta"
+                                }
+                                else{
+                                    closestObjectPosition = "Ön tarafta"
+                                }
+
+                                when (closestObjectName) {
+                                    "Kirmizi" -> {
+                                        val message = "Kırmızı ışık yanıyor. Bekleyin."
+                                        textToSpeech?.speak(message, TextToSpeech.QUEUE_ADD, null, null)
+                                    }
+                                    "Sari" -> {
+                                        val message = "Sarı ışık yanıyor. Bekleyin."
+                                        textToSpeech?.speak(message, TextToSpeech.QUEUE_ADD, null, null)
+                                    }
+                                    "Yesil" -> {
+                                        val message = "Yeşil ışık yanıyor. Geçebilirsiniz."
+                                        textToSpeech?.speak(message, TextToSpeech.QUEUE_ADD, null, null)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    val message = "$closestObjectPosition $closestObjectName"
+                    if (closestObjectName != "Kirmizi" && closestObjectName != "Sari" && closestObjectName != "Yesil") {
+                        if (closestObjectName == "Cukur") {
+                            val message2 = "$closestObjectPosition çukur"
+                            textToSpeech?.speak(message2, TextToSpeech.QUEUE_ADD, null, null)
+                        }
+                        else if (closestObjectName == "Otobus") {
+                            val message2 = "$closestObjectPosition otobüs"
+                            textToSpeech?.speak(message2, TextToSpeech.QUEUE_ADD, null, null)
+                        }
+                        else if (closestObjectName == "whiteCane") {
+                            val message2 = "$closestObjectPosition baston"
+                            textToSpeech?.speak(message2, TextToSpeech.QUEUE_ADD, null, null)
+                        }
+                        else if (closestObjectName == "Gecit") {
+                            val message2 = "$closestObjectPosition yaya geçidi"
+                            textToSpeech?.speak(message2, TextToSpeech.QUEUE_ADD, null, null)
+                        }
+                        else if (closestObjectName == "Kopek") {
+                            val message2 = "$closestObjectPosition köpek"
+                            textToSpeech?.speak(message2, TextToSpeech.QUEUE_ADD, null, null)
+                        }
+                        
+                        else {
+                            textToSpeech?.speak(message, TextToSpeech.QUEUE_ADD, null, null)
+
+
+                        }
+                    }
+                    lastAnnouncementTime = currentTime
+                }
+            }
+        }
+
         objectDetectorListener?.onResults(
-            ResultBundle(
-                listOf(result),
-                inferenceTime,
-                input.height,
-                input.width,
-                imageRotation
-            )
+                ResultBundle(
+                        listOf(result),
+                        inferenceTime,
+                        input.height,
+                        input.width,
+                        imageRotation
+                )
         )
     }
+
+
+
+
+    private fun calculateAreaToCamera(
+            height: Float,
+            width:Float
+    ): Float {
+        val area = height*width
+        return area
+    }
+
+
+
+
 
     // Return errors thrown during detection to this ObjectDetectorHelper's caller
     private fun returnLivestreamError(error: RuntimeException) {
         objectDetectorListener?.onError(
-            error.message ?: "An unknown error has occurred"
+                error.message ?: "An unknown error has occurred"
         )
     }
 
     // Accepted a Bitmap and runs object detection inference on it to return results back
     // to the caller
     fun detectImage(image: Bitmap): ResultBundle? {
-
         if (runningMode != RunningMode.IMAGE) {
             throw IllegalArgumentException(
-                "Attempting to call detectImage" + " while not using RunningMode.IMAGE"
+                    "Attempting to call detectImage" + " while not using RunningMode.IMAGE"
             )
         }
 
@@ -320,11 +458,39 @@ class ObjectDetectorHelper(
         // Run object detection using MediaPipe Object Detector API
         objectDetector?.detect(mpImage)?.also { detectionResult ->
             val inferenceTimeMs = SystemClock.uptimeMillis() - startTime
+            if(detectionResult != null){
+                val listeler = detectionResult.detections()
+                if (listeler != null && listeler.isNotEmpty()) {
+                    var closestObjectDistance = Float.MAX_VALUE
+                    var closestObjectName = ""
+                    for (detection in listeler) {
+                        val boundingBox = detection.boundingBox()
+                        if (boundingBox != null) {
+                            val centerX = boundingBox.centerX()
+                            val centerY = boundingBox.centerY()
+                            val distance = calculateAreaToCamera(boundingBox.height(),boundingBox.width())
+                            if (distance < closestObjectDistance) {
+                                closestObjectDistance = distance.toFloat()
+                                closestObjectName = detection.categories()[0].categoryName()
+                                if (closestObjectName == "laptop" || closestObjectName == "keyboard" || closestObjectName == "phone" ) {
+                                    val message= getOcrResults(detection,mpImage)
+                                    Log.d("basligimiz",message)
+                                    textToSpeech?.speak(message, TextToSpeech.QUEUE_ADD, null, null)
+                                }
+                                else{
+                                    val message = "$closestObjectName ${closestObjectDistance.toInt()} santimetre"
+                                    textToSpeech?.speak(message, TextToSpeech.QUEUE_ADD, null, null)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             return ResultBundle(
-                listOf(detectionResult),
-                inferenceTimeMs,
-                image.height,
-                image.width
+                    listOf(detectionResult),
+                    inferenceTimeMs,
+                    image.height,
+                    image.width
             )
         }
 
@@ -332,15 +498,78 @@ class ObjectDetectorHelper(
         // to indicate this.
         return null
     }
+    fun cropBitmapFromMPImage(image: Bitmap, left: Int, top: Int, width: Int, height: Int): Bitmap {
+        val croppedBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val pixels = IntArray(width * height)
+        image.getPixels(pixels, 0, width, left, top, width, height)
+        croppedBitmap.setPixels(pixels, 0, width, 0, 0, width, height)
+        return croppedBitmap
+    }
+    private fun getOcrResults(detection: Detection, image: MPImage): String {
+        val left = detection.boundingBox().left.toInt()
+        val top = detection.boundingBox().top.toInt()
+        val width = detection.boundingBox().width().toInt()
+        val height = detection.boundingBox().height().toInt()
+
+        val croppedBitmap = BitmapExtractor.extract(image)
+
+        val sonuc = cropBitmapFromMPImage(croppedBitmap,left,top,width,height)
+        if(sonuc!=null){
+            Log.d("bitmapKontrol","basarili")
+        }
+        else{
+            Log.d("bitmapKontrol","basarisiz")
+        }
+        val metin = ocrSpaceParsedText(sonuc)
+
+        return metin
+    }
+
+    fun ocrSpaceParsedText(image: Bitmap, overlay: Boolean = false, apiKey: String = "helloworld", language: String = "tur"): String {
+        val byteArrayOutputStream = ByteArrayOutputStream()
+        image.compress(Bitmap.CompressFormat.JPEG, 80, byteArrayOutputStream)
+        val compressedByteArray = byteArrayOutputStream.toByteArray()
+
+        val requestBody = MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("filename", "image.png", compressedByteArray.toRequestBody("image/png".toMediaTypeOrNull()))
+                .addFormDataPart("apikey", apiKey)
+                .addFormDataPart("language", language)
+                .addFormDataPart("isOverlayRequired", overlay.toString())
+                .build()
+
+        val request = Request.Builder()
+                .url("https://api.ocr.space/parse/image")
+                .post(requestBody)
+                .build()
+
+        val response = OkHttpClient().newCall(request).execute()
+        Log.d("yakupBABA","deniyoz")
+
+        val responseBody = response.body?.string()
+        val json = JSONObject(responseBody)
+        val parsedResults = json.getJSONArray("ParsedResults")
+
+        if (parsedResults.length() > 0) {
+            val firstResult = parsedResults.getJSONObject(0)
+            sonuc= firstResult.getString("ParsedText")
+        }
+        return sonuc
+    }
+
+
+
+
+
 
     // Wraps results from inference, the time it takes for inference to be performed, and
     // the input image and height for properly scaling UI to return back to callers
     data class ResultBundle(
-        val results: List<ObjectDetectorResult>,
-        val inferenceTime: Long,
-        val inputImageHeight: Int,
-        val inputImageWidth: Int,
-        val inputImageRotation: Int = 0
+            val results: List<ObjectDetectorResult>,
+            val inferenceTime: Long,
+            val inputImageHeight: Int,
+            val inputImageWidth: Int,
+            val inputImageRotation: Int = 0
     )
 
     companion object {
