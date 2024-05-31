@@ -1,2 +1,2 @@
 # Gorme-Engelliler-Icin-Sesli-Bildirimli-Nesne-Tespiti-Uygulamasi
-MediaPipe Kullanılarak Objeleri mesafeleriyle birlikte ölçen ve text-to-speech ile görme engelli bireye geri bildirim yapan uygulama.
+MediaPipe - MobileNet ile Android Platformlarda,Python Flask - YOLO ile Web Tabanlı Platformlarda kullanılmak üzere geliştirilmiş,görme engelli bireyler için kamera ve ses aracılığıyla en yakın nesneleri tespit edip, text-to-speech ile çıktı olarak veren, aynı zamanda video görüntüler için çeşitli senaryoların bulunduğu Flickr-8K Dataseti ile hareket tespiti yapıp text-to-speech ile çıktı olarak veren iki farklı platformda uygulama.
